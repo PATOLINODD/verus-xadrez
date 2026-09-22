@@ -10,6 +10,7 @@
     "typescript": "^7"
   },
   "scripts": {
-    "dev": "bun index.ts"
+    "dev": "bun --hot index.ts",
+    "start": "bun index.ts"
   }
 }
