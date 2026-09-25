@@ -1,0 +1,7 @@
+:root {
+    --arrow-color: hsl(30 50% 40% / 0.8);
+}
+
+svg {
+    transition: all .3s ease-out;
+}
