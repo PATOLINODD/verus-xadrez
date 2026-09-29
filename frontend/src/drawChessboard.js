@@ -56,7 +56,7 @@ export function renderPieces(boardState) {
                         style="position: absolute; left: ${leftPosition}px; top: ${topPosition}px; width: ${squareSize}px; height: ${squareSize}px; display: flex; justify-content: center; align-items: center; pointer-events: auto; cursor: grab;">
                         
                         <svg viewBox="${nativeViewBox}" style="width: 100%; height: 100%; pointer-events: none;">
-                            <use href="./assets/pieces/standard.svg#${svgId}"></use>
+                            <use href="#${svgId}"></use>
                         </svg>
                         
                     </div>

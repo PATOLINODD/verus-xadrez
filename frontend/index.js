@@ -542,6 +542,12 @@ fetch('./assets/pieces/standard.svg')
         const parser = new DOMParser();
         const svgDoc = parser.parseFromString(svgText, "image/svg+xml");
 
+        // Inject the SVG into the DOM to prevent flickering
+        const hiddenDiv = document.createElement('div');
+        hiddenDiv.style.display = 'none';
+        hiddenDiv.innerHTML = svgText;
+        document.body.appendChild(hiddenDiv);
+
         // Iterate through the svgMap to extract each piece's <g> tag
         for (const [char, svgId] of Object.entries(svgMap)) {
             const groupElement = svgDoc.getElementById(svgId);
