@@ -1,4 +1,4 @@
-import { drawChessboard, renderPieces, drawArrow, clearArrows, squareSize, triggerExplosion, imagePieces } from "./src/drawChessboard.js";
+import { drawChessboard, renderPieces, drawArrow, clearArrows, squareSize, triggerExplosion, imagePieces, color, rows, cols } from "./src/drawChessboard.js";
 import { boardState, svgMap } from "./src/handlePieceState.js";
 
 drawChessboard();
@@ -8,6 +8,7 @@ renderPieces(boardState);
 const gameContainer = document.getElementById('game-container');
 let drawStartSquare = null;
 
+
 function getSquareFromEvent(event) {
     const rect = gameContainer.getBoundingClientRect();
 
@@ -15,7 +16,7 @@ function getSquareFromEvent(event) {
     const x = event.clientX - rect.left;
     const y = event.clientY - rect.top;
 
-    // Divide by squareSize (80) and floor the result to get the exact row/col
+    // Divide by squareSize and floor the result to get the exact row/col
     return {
         row: Math.floor(y / squareSize),
         col: Math.floor(x / squareSize)
@@ -27,24 +28,19 @@ gameContainer.addEventListener('contextmenu', (e) => {
 });
 
 gameContainer.addEventListener('mousedown', (e) => {
-    // Ensure we are only responding to the left mouse button
     if (e.button === 0) {
-
-        if (e.altKey) {
-            // Alt + Left Click: Prevent default browser behavior and start drawing
-            e.preventDefault();
-            drawStartSquare = getSquareFromEvent(e);
-        } else {
-            // Left Click alone: Clear all existing arrows on the board
-            clearArrows();
-        }
-
+        // Left Click alone: Clear all existing arrows on the board
+        clearArrows();
+    } else if (e.button === 2) {
+        e.preventDefault();
+        drawStartSquare = getSquareFromEvent(e);
+        console.log("right click!");
     }
 });
 
 gameContainer.addEventListener('mouseup', (e) => {
     // If the left button is released AND we are currently tracking a drawing gesture
-    if (e.button === 0 && drawStartSquare) {
+    if (e.button === 2 && drawStartSquare) {
         const drawEndSquare = getSquareFromEvent(e);
 
         // Validate that the mouse moved to a new square
@@ -68,7 +64,7 @@ const hintsLayer = document.getElementById('hints-layer');
 export function drawHints(legalMoves) {
     // Clear any existing hints
     hintsLayer.innerHTML = '';
-    const color = "hsl(200 100% 60% / 1)";
+    const hintColor = `hsl(${color} 100% 15% / 0.5)`;
     const redColor = "hsl(0 100% 40%)";
 
     legalMoves.forEach(move => {
@@ -80,18 +76,16 @@ export function drawHints(legalMoves) {
         if (move.isCapture) {
             // Draw a sleek, red X symbol centered in the 80x80 square
             svgContent = `
-                <line x1="25" y1="25" x2="55" y2="55" stroke="${redColor}" stroke-width="6" stroke-linecap="round" />
-                <line x1="55" y1="25" x2="25" y2="55" stroke="${redColor}" stroke-width="6" stroke-linecap="round" />
+                <line x1="${(squareSize * 0.25)}" y1="${(squareSize * 0.25)}" x2="${squareSize - (squareSize * 0.25)}" y2="${squareSize - (squareSize * 0.25)}" stroke="${redColor}" stroke-width="${squareSize * 0.075}" stroke-linecap="round" />
+                <line x1="${squareSize - (squareSize * 0.25)}" y1="${(squareSize * 0.25)}" x2="${(squareSize * 0.25)}" y2="${squareSize - (squareSize * 0.25)}" stroke="${redColor}" stroke-width="${squareSize * 0.075}" stroke-linecap="round" />
             `;
         } else {
             // Draw a solid dot for empty squares (radius 12)
-            svgContent = `<circle cx="40" cy="40" r="12" fill="${color}" />`;
+            svgContent = `<circle cx="${squareSize / 2}" cy="${squareSize / 2}" r="${squareSize * 0.12}" fill="${hintColor}" />`;
         }
 
         const hintHTML = `
-            <svg 
-                style="position: absolute; left: ${left}px; top: ${top}px; width: ${squareSize}px; height: ${squareSize}px;"
-            >
+            <svg style="position: absolute; left: ${left}px; top: ${top}px; width: ${squareSize}px; height: ${squareSize}px;">
                 ${svgContent}
             </svg>
         `;
@@ -197,69 +191,189 @@ export function getPawnMoves(startRow, startCol, boardState) {
         }
     }
 
+    // ... existing diagonal capture logic ...
+
+    // 4. En Passant Validation
+    if (lastMove && lastMove.pieceChar.toLowerCase() === 'p') {
+        // Did the enemy pawn just move exactly two squares?
+        const wasDoubleStep = Math.abs(lastMove.fromRow - lastMove.toRow) === 2;
+
+        // Did it land immediately to the left or right of our moving pawn?
+        const isAdjacent = lastMove.toRow === startRow && Math.abs(lastMove.toCol - startCol) === 1;
+
+        if (wasDoubleStep && isAdjacent) {
+            // The legal destination is one square diagonally forward, behind the enemy pawn
+            moves.push({
+                row: nextRow,
+                col: lastMove.toCol,
+                isCapture: true
+            });
+        }
+    }
+
     return moves;
 }
 
 
-
 // This will hold an object: { row, col, moves: [] }
 let activeSelection = null;
+let lastMove = null; // Will store: { pieceChar, fromRow, fromCol, toRow, toCol }
 
 export async function executeMove(fromSquare, toSquare, boardState) {
-    // Clear the hints immediately so the UI feels responsive
     clearHints();
 
-    // 1. Wait for the WAAPI translation to finish visually
+    const movingPieceChar = boardState[fromSquare.row][fromSquare.col];
+    const targetPieceChar = boardState[toSquare.row][toSquare.col];
+    
+    // Wait for the WAAPI translation to finish visually
     await animatePiece(fromSquare, toSquare);
 
-    // 2. Update the underlying data matrix
-    const piece = boardState[fromSquare.row][fromSquare.col];
-    
-    const isPiece = svgMap[boardState[toSquare.row][toSquare.col]];
-    boardState[toSquare.row][toSquare.col] = piece;
+    // Mathematical En Passant Detection:
+    // A pawn is moving diagonally (columns differ) into a completely empty square.
+    const isEnPassant = movingPieceChar.toLowerCase() === 'p' &&
+        fromSquare.col !== toSquare.col &&
+        !targetPieceChar;
+        
+    if (targetPieceChar) {
+        // Standard Capture
+        triggerExplosion(toSquare.row, toSquare.col, svgMap[targetPieceChar]);
+        const capturedElement = document.querySelector(`.chess-piece-wrapper[data-row="${toSquare.row}"][data-col="${toSquare.col}"]`);
+        if (capturedElement) capturedElement.style.display = 'none';
+
+    } else if (isEnPassant) {
+        // En Passant Capture
+        const capturedRow = fromSquare.row; // The enemy pawn is on our starting row
+        const capturedCol = toSquare.col;   // The enemy pawn is in our target column
+        const capturedPieceChar = boardState[capturedRow][capturedCol];
+
+        triggerExplosion(capturedRow, capturedCol, svgMap[capturedPieceChar]);
+
+        const capturedElement = document.querySelector(`.chess-piece-wrapper[data-row="${capturedRow}"][data-col="${capturedCol}"]`);
+        if (capturedElement) capturedElement.style.display = 'none';
+
+        // Delete the enemy pawn from the array immediately
+        boardState[capturedRow][capturedCol] = null;
+    }
+
+
+    // Update the underlying data matrix
+    boardState[toSquare.row][toSquare.col] = movingPieceChar;
     boardState[fromSquare.row][fromSquare.col] = null;
 
-    if(isPiece) {
-        triggerExplosion(toSquare.row, toSquare.col, isPiece);
-    }
-        
-    
+    // Record this move so the engine can evaluate En Passant on the NEXT turn
+    lastMove = {
+        pieceChar: movingPieceChar,
+        fromRow: fromSquare.row,
+        fromCol: fromSquare.col,
+        toRow: toSquare.row,
+        toCol: toSquare.col
+    };
 
-    // 3. Re-render the DOM to lock the piece into its new absolute position
     renderPieces(boardState);
 }
 
-
 export async function animatePiece(fromSquare, toSquare) {
-    // 1. Locate the specific DOM element using the data attributes
     const pieceElement = document.querySelector(`.chess-piece-wrapper[data-row="${fromSquare.row}"][data-col="${fromSquare.col}"]`);
-
     if (!pieceElement) return;
 
-    // 2. Calculate the exact pixel distance to travel on the X and Y axes
     const deltaX = (toSquare.col - fromSquare.col) * squareSize;
     const deltaY = (toSquare.row - fromSquare.row) * squareSize;
-
-    const dx = Math.random() * (max - min) + min;
-
-    // 3. Bring the animating piece to the front so it does not slide under others
     pieceElement.style.zIndex = "100";
 
-    // 4. Define and execute the Web Animation API keyframes
+    const href = pieceElement.querySelector('use').getAttribute('href');
+    const svgId = href.split('#')[1];
+    const img = imagePieces[svgId];
+    const gameContainer = document.getElementById('game-container');
+
+    // Create a dedicated, temporary canvas specifically for this trail
+    const trailCanvas = document.createElement('canvas');
+    trailCanvas.width = squareSize * cols;
+    trailCanvas.height = squareSize * rows;
+    trailCanvas.style.cssText = "position: absolute; top: 0; left: 0; z-index: 1; pointer-events: none;";
+    gameContainer.appendChild(trailCanvas);
+    const trailCtx = trailCanvas.getContext('2d');
+
+    let isAnimating = true;
+    const ghosts = [];
+
+    // 1. Frame Rate Controller (Adjust this value to test different densities)
+    // 60 = ultra-smooth/dense, 24 = cinematic, 12 = stylized/sparse stop-motion
+    const targetFPS = 30;
+    const frameInterval = 1000 / targetFPS;
+    let previousTimestamp = performance.now();
+
+    // 2. Accept the timestamp parameter
+    function renderTrail(currentTimestamp) {
+
+        // Calculate the exact milliseconds elapsed since the last drawn frame
+        const elapsed = currentTimestamp - previousTimestamp;
+
+        // If the elapsed time is less than our target interval, skip drawing entirely
+        if (elapsed < frameInterval) {
+            if (isAnimating || ghosts.length > 0) {
+                requestAnimationFrame(renderTrail);
+            } else {
+                trailCanvas.remove();
+            }
+            return; // Terminate execution for this frame
+        }
+
+        // Update the timestamp for the next cycle, modulo the remainder to prevent time drift
+        previousTimestamp = currentTimestamp - (elapsed % frameInterval);
+
+        // --- YOUR EXISTING RENDER LOGIC BELOW ---
+        trailCtx.clearRect(0, 0, trailCanvas.width, trailCanvas.height);
+
+        if (isAnimating) {
+            const rect = pieceElement.getBoundingClientRect();
+            const containerRect = gameContainer.getBoundingClientRect();
+            const x = rect.left - containerRect.left;
+            const y = rect.top - containerRect.top;
+            ghosts.push({ x, y, opacity: 0.4 });
+        }
+
+        for (let i = ghosts.length - 1; i >= 0; i--) {
+            const ghost = ghosts[i];
+            trailCtx.globalAlpha = ghost.opacity;
+
+            if (img) {
+                trailCtx.drawImage(img, ghost.x, ghost.y, squareSize, squareSize);
+                trailCtx.globalCompositeOperation = 'source-atop';
+                trailCtx.fillStyle = 'hsl(0 100% 40% / 1)';
+                trailCtx.fillRect(ghost.x, ghost.y, squareSize, squareSize);
+                trailCtx.globalCompositeOperation = 'source-over';
+            }
+
+            // Note: If you drastically lower the FPS (e.g., to 12), you may want to 
+            // increase this decay value (e.g., to 0.10) so the ghosts still fade out quickly.
+            ghost.opacity -= 0.05;
+
+            if (ghost.opacity <= 0) ghosts.splice(i, 1);
+        }
+
+        trailCtx.globalAlpha = 1.0;
+
+        if (isAnimating || ghosts.length > 0) {
+            requestAnimationFrame(renderTrail);
+        } else {
+            trailCanvas.remove();
+        }
+    }
+
+    requestAnimationFrame(renderTrail); // is calling without the parameter good here?
+
     const animation = pieceElement.animate([
         { transform: 'translate(0px, 0px)' },
         { transform: `translate(${deltaX}px, ${deltaY}px)` }
     ], {
-        duration: 250, // 250ms is standard for UI interaction speeds
-        easing: 'ease-in', // An easing curve that starts fast and decelerates smoothly
-        fill: 'forwards' // Hold the piece at the final position when the animation ends
+        duration: 180,
+        easing: 'ease-in',
+        fill: 'forwards'
     });
 
-    // 5. Pause code execution until the animation completely finishes
     await animation.finished;
+    isAnimating = false;
 }
-
-
 
 gameContainer.addEventListener('mousedown', (e) => {
     // Ignore right-clicks or Alt-clicks used for drawing arrows
@@ -445,3 +559,5 @@ fetch('./assets/pieces/standard.svg')
             }
         }
     });
+
+
