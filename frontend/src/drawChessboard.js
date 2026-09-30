@@ -3,8 +3,8 @@ import { boardState, svgMap } from "./handlePieceState.js";
 import { getComplementaryColor } from "./utils/util.js";
 
 export const imagePieces = {};
-export const squareSize = 50;
-export const color = 40;
+export const squareSize = 90;
+export const color = 100;
 export const light = 70;
 export const [rows, cols] = [8, 8];
 
@@ -99,7 +99,7 @@ export function drawArrow(fromRow, fromCol, toRow, toCol) {
     const distance = Math.hypot(dx, dy);
 
     // Adjust this value to bring the arrowhead closer to or further from the center
-    const offset = 35;
+    const offset = squareSize * 0.5;
 
     const ratio = (distance - offset) / distance;
     const newEndX = start.x + (dx * ratio);
@@ -146,7 +146,7 @@ function rasterizePiece(svgId) {
 
 
 
-function createVoronoiShards(imageData, numShards = 15) {
+function createVoronoiShards(imageData, numShards = 8) {
     const shards = Array.from({ length: numShards }, () => {
         const centerX = Math.random() * squareSize;
         const centerY = Math.random() * squareSize;
@@ -154,7 +154,7 @@ function createVoronoiShards(imageData, numShards = 15) {
         // Calculate an outward angle from the center of the square (explosion effect)
         const angle = Math.atan2(centerY - squareSize / 2, centerX - squareSize / 2);
         // Generate a random outward speed
-        const speed = (Math.random() * 12) + 8;
+        const speed = (Math.random() * 1) + squareSize * 0.1;
 
         return {
             centerX,
@@ -288,12 +288,14 @@ export function triggerExplosion(captureRow, captureCol, capturedSvgId) {
     const startY = rect.top + captureRow * squareSize;
     
     let opacity = 1.0;
+    let time = squareSize * 0.6;
 
     function animate() {
         fxCtx.clearRect(0, 0, fxCanvas.width, fxCanvas.height);
-        opacity -= 0.05; 
+        opacity -= 0.05;
+        time -= 3;
         
-        if (opacity <= 0) return; 
+        if (time <= 0) return; 
 
         shards.forEach(shard => {
             // Move the chunk along its 360-degree vector
@@ -307,7 +309,7 @@ export function triggerExplosion(captureRow, captureCol, capturedSvgId) {
             fxCtx.drawImage(shard.canvas, startX + shard.offsetX, startY + shard.offsetY);
         });
 
-        requestAnimationFrame(animate);
+        if (time > 0) requestAnimationFrame(animate);
     }
     
     animate();

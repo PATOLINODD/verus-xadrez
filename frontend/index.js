@@ -81,7 +81,7 @@ export function drawHints(legalMoves) {
             `;
         } else {
             // Draw a solid dot for empty squares (radius 12)
-            svgContent = `<circle cx="${squareSize / 2}" cy="${squareSize / 2}" r="${squareSize * 0.12}" fill="${hintColor}" />`;
+            svgContent = `<circle cx="${squareSize / 2}" cy="${squareSize / 2}" r="${squareSize * 0.14}" fill="${hintColor}" />`;
         }
 
         const hintHTML = `
