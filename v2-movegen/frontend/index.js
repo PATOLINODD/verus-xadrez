@@ -1,5 +1,6 @@
 import { drawChessboard, renderPieces, drawArrow, clearArrows, squareSize, triggerExplosion, imagePieces, color, rows, cols } from "./src/drawChessboard.js";
 import { boardState, svgMap } from "./src/handlePieceState.js";
+import { game, syncBoardState } from "./engine.js";
 
 drawChessboard();
 renderPieces(boardState);
@@ -104,122 +105,13 @@ export function clearHints() {
 
 
 
-// Returns true if the piece is uppercase (White)
-function isWhite(piece) {
-    return piece === piece.toUpperCase();
-}
-
-// Returns true if the target square contains a piece of the opposite case
-function isEnemy(movingPiece, targetPiece) {
-    if (!targetPiece) return false; // Empty squares are not enemies
-    return isWhite(movingPiece) !== isWhite(targetPiece);
-}
-
-
-
-export function getSlidingMoves(startRow, startCol, boardState, directions) {
-    const moves = [];
-    const movingPiece = boardState[startRow][startCol];
-
-    for (const [dRow, dCol] of directions) {
-        let currentRow = startRow + dRow;
-        let currentCol = startCol + dCol;
-
-        while (currentRow >= 0 && currentRow < 8 && currentCol >= 0 && currentCol < 8) {
-            const targetPiece = boardState[currentRow][currentCol];
-
-            if (targetPiece === null) {
-                moves.push({ row: currentRow, col: currentCol, isCapture: false });
-            } else {
-                if (isEnemy(movingPiece, targetPiece)) {
-                    moves.push({ row: currentRow, col: currentCol, isCapture: true });
-                }
-                break; // The slide is blocked by either a friend or an enemy
-            }
-
-            currentRow += dRow;
-            currentCol += dCol;
-        }
-    }
-    return moves;
-}
-
-
-
-export function getPawnMoves(startRow, startCol, boardState) {
-    const moves = [];
-    const movingPiece = boardState[startRow][startCol];
-    const isWhitePiece = isWhite(movingPiece);
-
-    // White moves UP the matrix (-1), Black moves DOWN (+1)
-    const direction = isWhitePiece ? -1 : 1;
-
-    // White pawns start on row 6, Black pawns start on row 1
-    const startingRow = isWhitePiece ? 6 : 1;
-
-    const nextRow = startRow + direction;
-
-    // Ensure the next row is within the bounds of the board
-    if (nextRow < 0 || nextRow > 7) return moves;
-
-    // 1. Single Step Forward
-    if (boardState[nextRow][startCol] === null) {
-        moves.push({ row: nextRow, col: startCol, isCapture: false });
-
-        // 2. Double Step Forward (Requires the single step to be empty first)
-        if (startRow === startingRow) {
-            const doubleStepRow = startRow + (direction * 2);
-            if (boardState[doubleStepRow][startCol] === null) {
-                moves.push({ row: doubleStepRow, col: startCol, isCapture: false });
-            }
-        }
-    }
-
-
-    // 3. Diagonal Captures (Left and Right)
-    const captureCols = [startCol - 1, startCol + 1];
-
-    for (const targetCol of captureCols) {
-        // Verify the column index is within the 0-7 matrix bounds
-        if (targetCol >= 0 && targetCol <= 7) {
-            const targetPiece = boardState[nextRow][targetCol];
-
-            // If a piece exists there AND it is an enemy, it is a valid capture
-            if (targetPiece !== null && isEnemy(movingPiece, targetPiece)) {
-                moves.push({ row: nextRow, col: targetCol, isCapture: true });
-            }
-        }
-    }
-
-    // ... existing diagonal capture logic ...
-
-    // 4. En Passant Validation
-    if (lastMove && lastMove.pieceChar.toLowerCase() === 'p') {
-        // Did the enemy pawn just move exactly two squares?
-        const wasDoubleStep = Math.abs(lastMove.fromRow - lastMove.toRow) === 2;
-
-        // Did it land immediately to the left or right of our moving pawn?
-        const isAdjacent = lastMove.toRow === startRow && Math.abs(lastMove.toCol - startCol) === 1;
-
-        if (wasDoubleStep && isAdjacent) {
-            // The legal destination is one square diagonally forward, behind the enemy pawn
-            moves.push({
-                row: nextRow,
-                col: lastMove.toCol,
-                isCapture: true
-            });
-        }
-    }
-
-    return moves;
-}
 
 
 // This will hold an object: { row, col, moves: [] }
 let activeSelection = null;
 let lastMove = null; // Will store: { pieceChar, fromRow, fromCol, toRow, toCol }
 
-export async function executeMove(fromSquare, toSquare, boardState) {
+export async function executeMove(fromSquare, toSquare, moveObj, boardState) {
     clearHints();
 
     const movingPieceChar = boardState[fromSquare.row][fromSquare.col];
@@ -228,19 +120,10 @@ export async function executeMove(fromSquare, toSquare, boardState) {
     // Wait for the WAAPI translation to finish visually
     await animatePiece(fromSquare, toSquare);
 
-    // Mathematical En Passant Detection:
-    // A pawn is moving diagonally (columns differ) into a completely empty square.
-    const isEnPassant = movingPieceChar.toLowerCase() === 'p' &&
-        fromSquare.col !== toSquare.col &&
-        !targetPieceChar;
-        
-    if (targetPieceChar) {
-        // Standard Capture
-        triggerExplosion(toSquare.row, toSquare.col, svgMap[targetPieceChar]);
-        const capturedElement = document.querySelector(`.chess-piece-wrapper[data-row="${toSquare.row}"][data-col="${toSquare.col}"]`);
-        if (capturedElement) capturedElement.style.display = 'none';
+    const isEnPassant = (moveObj.mask & 8) !== 0;
+    const isCapture = (moveObj.mask & 1) !== 0;
 
-    } else if (isEnPassant) {
+    if (isEnPassant) {
         // En Passant Capture
         const capturedRow = fromSquare.row; // The enemy pawn is on our starting row
         const capturedCol = toSquare.col;   // The enemy pawn is in our target column
@@ -250,25 +133,21 @@ export async function executeMove(fromSquare, toSquare, boardState) {
 
         const capturedElement = document.querySelector(`.chess-piece-wrapper[data-row="${capturedRow}"][data-col="${capturedCol}"]`);
         if (capturedElement) capturedElement.style.display = 'none';
-
-        // Delete the enemy pawn from the array immediately
-        boardState[capturedRow][capturedCol] = null;
+    } else if (isCapture) {
+        // Standard Capture
+        triggerExplosion(toSquare.row, toSquare.col, svgMap[targetPieceChar]);
+        const capturedElement = document.querySelector(`.chess-piece-wrapper[data-row="${toSquare.row}"][data-col="${toSquare.col}"]`);
+        if (capturedElement) capturedElement.style.display = 'none';
     }
 
+    // Apply move to engine
+    game.makemove(moveObj);
+    game.generateMoves();
 
-    // Update the underlying data matrix
-    boardState[toSquare.row][toSquare.col] = movingPieceChar;
-    boardState[fromSquare.row][fromSquare.col] = null;
+    // Sync the board logic state with the visual state array
+    syncBoardState(boardState);
 
-    // Record this move so the engine can evaluate En Passant on the NEXT turn
-    lastMove = {
-        pieceChar: movingPieceChar,
-        fromRow: fromSquare.row,
-        fromCol: fromSquare.col,
-        toRow: toSquare.row,
-        toCol: toSquare.col
-    };
-
+    // Re-render the visual pieces
     renderPieces(boardState);
 }
 
@@ -391,7 +270,7 @@ gameContainer.addEventListener('mousedown', (e) => {
 
         if (isValidDestination) {
             // Execute the state update and UI render
-            executeMove(activeSelection, clickedSquare, boardState);
+            executeMove(activeSelection, clickedSquare, isValidDestination.moveObj, boardState);
 
             // Clear the selection so the next click starts fresh
             activeSelection = null;
@@ -418,121 +297,31 @@ gameContainer.addEventListener('mousedown', (e) => {
     }
 });
 
-
-
-
-
-
 export function getLegalMoves(row, col, boardState) {
-    const pieceChar = boardState[row][col];
-
-    // Safety check: if the square is empty, there are no moves
-    if (!pieceChar) return [];
-
-    const normalizedPiece = pieceChar.toLowerCase();
-
-    // Route the coordinate data to the correct algorithmic function
-    switch (normalizedPiece) {
-        case 'p':
-            return getPawnMoves(row, col, boardState);
-        case 'r':
-            return getRookMoves(row, col, boardState);
-        case 'n':
-            return getKnightMoves(row, col, boardState);
-        case 'b':
-            return getBishopMoves(row, col, boardState);
-        case 'q':
-            return getQueenMoves(row, col, boardState);
-        case 'k':
-            return getKingMoves(row, col, boardState);
-        default:
-            return [];
-    }
-}
-
-
-
-export function getBishopMoves(row, col, boardState) {
-    const diagonalVectors = [
-        [-1, -1], [-1, 1], // Northwest, Northeast
-        [1, -1], [1, 1]    // Southwest, Southeast
-    ];
-    return getSlidingMoves(row, col, boardState, diagonalVectors);
-}
-
-export function getQueenMoves(row, col, boardState) {
-    const omniVectors = [
-        [-1, 0], [1, 0], [0, -1], [0, 1],       // Orthogonal (Rook)
-        [-1, -1], [-1, 1], [1, -1], [1, 1]      // Diagonal (Bishop)
-    ];
-    return getSlidingMoves(row, col, boardState, omniVectors);
-}
-
-// You can also refactor your existing getRookMoves to use this:
-export function getRookMoves(row, col, boardState) {
-    const orthogonalVectors = [[-1, 0], [1, 0], [0, -1], [0, 1]];
-    return getSlidingMoves(row, col, boardState, orthogonalVectors);
-}
-
-
-
-
-export function getKnightMoves(startRow, startCol, boardState) {
     const moves = [];
-    const movingPiece = boardState[startRow][startCol];
-
-    // The 8 possible "L" shape jumps
-    const knightJumps = [
-        [-2, -1], [-2, 1], [-1, -2], [-1, 2],
-        [1, -2], [1, 2], [2, -1], [2, 1]
-    ];
-
-    for (const [dRow, dCol] of knightJumps) {
-        const targetRow = startRow + dRow;
-        const targetCol = startCol + dCol;
-
-        if (targetRow >= 0 && targetRow < 8 && targetCol >= 0 && targetCol < 8) {
-            const targetPiece = boardState[targetRow][targetCol];
-
-            if (targetPiece === null) {
-                moves.push({ row: targetRow, col: targetCol, isCapture: false });
-            } else if (isEnemy(movingPiece, targetPiece)) {
-                moves.push({ row: targetRow, col: targetCol, isCapture: true });
-
-            }
+    const rank = 7 - row;
+    const file = col;
+    const sq = (rank << 4) | file;
+    
+    for (let i = 0; i < game.moves.length; i++) {
+        const move = game.moves[i];
+        if (move.from === sq) {
+            const targetRank = move.to >>> 4;
+            const targetFile = move.to & 7;
+            const targetRow = 7 - targetRank;
+            const targetCol = targetFile;
+            moves.push({
+                row: targetRow,
+                col: targetCol,
+                isCapture: (move.mask & 1) !== 0,
+                moveObj: move
+            });
         }
     }
     return moves;
 }
 
-export function getKingMoves(startRow, startCol, boardState) {
-    const moves = [];
-    const movingPiece = boardState[startRow][startCol];
 
-    // The 8 immediately adjacent squares
-    const kingSteps = [
-        [-1, -1], [-1, 0], [-1, 1],
-        [0, -1], [0, 1],
-        [1, -1], [1, 0], [1, 1]
-    ];
-
-    for (const [dRow, dCol] of kingSteps) {
-        const targetRow = startRow + dRow;
-        const targetCol = startCol + dCol;
-
-        if (targetRow >= 0 && targetRow < 8 && targetCol >= 0 && targetCol < 8) {
-            const targetPiece = boardState[targetRow][targetCol];
-
-            if (targetPiece === null) {
-                moves.push({ row: targetRow, col: targetCol, isCapture: false });
-            } else if (isEnemy(movingPiece, targetPiece)) {
-                moves.push({ row: targetRow, col: targetCol, isCapture: true });
-
-            }
-        }
-    }
-    return moves;
-}
 
 
 
